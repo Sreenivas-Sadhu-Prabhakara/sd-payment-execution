@@ -14,7 +14,7 @@ management:
   endpoint:
     health:
       probes:
-        enabled: true   # /actuator/health/liveness + /readiness for K8s probes
+        enabled: true
   info:
     env:
       enabled: true
@@ -27,6 +27,11 @@ info:
     functionalPattern: "Process"
     assetType: "Payment Transaction"
     controlRecord: "Payment Transaction Procedure"
+    phase: "2b-deep"
+
+# Account legs run against the failure-injectable simulator (see
+# SimulatedAccountsClient). The HTTP adapter against the real account SDs
+# replaces it when cross-service wiring goes live.
 
 resilience4j:
   circuitbreaker:

@@ -1,55 +1,40 @@
 # Payment Execution
 
-BIAN Service Domain microservice — part of the [bian-platform](../../bian-platform/) landscape.
+BIAN Service Domain microservice — **Phase 2b-c DEEP build** (graduated; see `.bian-graduated`). The execution half of the **payments flagship**.
 
 | | |
 |---|---|
-| **Business Area** | Operations and Execution |
-| **Business Domain** | Payments |
-| **Functional Pattern** | Process |
-| **Asset Type** | Payment Transaction |
-| **Control Record** | Payment Transaction Procedure |
+| **Business Area / Domain** | Operations and Execution / Payments |
+| **Pattern / Control Record** | Process / Payment Transaction Procedure |
 | **K8s Namespace** | `bian-operations` |
-| **Stack** | Java 21 · Spring Boot 3 · Resilience4j · Cilium mesh |
 
-> ⚠️ **Phase 1 (shallow):** real REST API over an in-memory store. Phase 2 replaces the store with per-domain persistence and real domain logic. This repo was stamped from `bian-platform/generator` — regenerate rather than hand-editing boilerplate.
+## The debit-credit saga
 
-## BIAN Semantic API
+```
+RECEIVED ─debit ok─▶ DEBITED ─credit ok─▶ COMPLETED
+   │                    └─credit fails─▶ COMPENSATING
+   │                          ├─repay ok──▶ FAILED_COMPENSATED  (money back with debtor)
+   │                          └─repay fails▶ FAILED_SUSPENSE    (funds in flight — OPS!)
+   └─debit fails─▶ FAILED_DEBIT  (nothing moved)
+```
 
-| Method | Path | BIAN action term |
-|---|---|---|
-| GET | `/v1/service-domain` | — (SD metadata) |
-| POST | `/v1/payment-transaction-procedure/initiate` | Initiate |
-| GET | `/v1/payment-transaction-procedure` | Retrieve (list) |
-| GET | `/v1/payment-transaction-procedure/{crId}/retrieve` | Retrieve |
-| PUT | `/v1/payment-transaction-procedure/{crId}/update` | Update |
-| PUT | `/v1/payment-transaction-procedure/{crId}/control` | Control — body `{"action": "suspend"\|"resume"\|"terminate"}` |
+- **Idempotent on `orderRef`** — re-submitting an executed order returns the existing execution; money never moves twice (also a DB unique index once hydrated).
+- **`FAILED_SUSPENSE` is deliberately loud** — debit succeeded, credit *and* compensation failed. Emits `payment.suspense`, never auto-retried, indexed as the ops queue.
+- Account legs run through the `AccountsClient` port. Phase 2b-c binds a **failure-injectable simulator** so every saga path is exercisable: account refs containing `FAIL-DEBIT`, `FAIL-CREDIT`, or `FAIL-COMPENSATE` drive each branch. The HTTP adapter against the real account SDs replaces it without touching the saga.
 
-OpenAPI UI: `/swagger-ui.html` · Health: `/actuator/health` · Metrics: `/actuator/prometheus`
-
-**API contract:** [`api/openapi.yaml`](api/openapi.yaml) — owned by **this repo** (contract-per-repo; no central contracts repo). The runtime spec at `/v3/api-docs` must stay compatible with it; Phase 2 adds contract tests that enforce this.
-
-## Run locally
+## API (contracts owned by this repo: [`api/openapi.yaml`](api/openapi.yaml), [`api/events.yaml`](api/events.yaml))
 
 ```bash
 mvn spring-boot:run
-curl localhost:8080/v1/service-domain
-
-# lifecycle smoke test
-curl -X POST localhost:8080/v1/payment-transaction-procedure/initiate -H 'content-type: application/json' -d '{"note":"hello"}'
+CR=/v1/payment-transaction-procedure
+# happy path
+curl -s -X POST localhost:8080$CR/initiate -H 'content-type: application/json' \
+  -d '{"orderRef":"PO-1","debtorAccountRef":"CA-D","creditorAccountRef":"CA-C","amountMinor":50000}'
+# exercise compensation
+curl -s -X POST localhost:8080$CR/initiate -H 'content-type: application/json' \
+  -d '{"orderRef":"PO-2","debtorAccountRef":"CA-D","creditorAccountRef":"CA-FAIL-CREDIT-1","amountMinor":50000}'
 ```
 
-## Build & containerize
+## Persistence & tests
 
-```bash
-mvn -B verify
-docker build -t bian/sd-payment-execution:0.1.0 .
-```
-
-## Deploy (Helm → K8s with Cilium mesh)
-
-```bash
-helm upgrade --install sd-payment-execution ./helm -n bian-operations
-```
-
-Exposed through the platform Gateway at path prefix `/sd-payment-execution` (Cilium Gateway API). Mesh policy (`CiliumNetworkPolicy`) allows: gateway ingress, same-area peers, Prometheus — everything else denied.
+In-memory port/adapter. Postgres staged in [`db/schema.sql`](db/schema.sql) — gated. `mvn verify` proves all four saga outcomes and the idempotency guarantee.

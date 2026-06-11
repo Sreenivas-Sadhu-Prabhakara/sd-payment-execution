@@ -10,12 +10,11 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Smoke test: the context boots and the BIAN semantic API answers.
- * Phase 2 adds real domain tests per service domain.
- */
+/** Boot + API smoke: the saga through HTTP, happy and compensated paths. */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ApplicationTests {
+
+    static final String CR = "/v1/payment-transaction-procedure";
 
     @LocalServerPort
     int port;
@@ -23,20 +22,25 @@ class ApplicationTests {
     @Autowired
     TestRestTemplate rest;
 
+    String url(String path) { return "http://localhost:" + port + path; }
+
     @Test
-    void serviceDomainMetadataIsServed() {
-        @SuppressWarnings("unchecked")
-        Map<String, String> meta = rest.getForObject("http://localhost:" + port + "/v1/service-domain", Map.class);
-        assertThat(meta).containsEntry("serviceDomain", "Payment Execution");
-        assertThat(meta).containsEntry("functionalPattern", "Process");
+    void happyPathCompletesThroughTheApi() {
+        var r = rest.postForEntity(url(CR + "/initiate"),
+                Map.of("orderRef", "PO-API-1", "debtorAccountRef", "CA-D",
+                        "creditorAccountRef", "CA-C", "amountMinor", 50_000, "currency", "INR"),
+                Map.class);
+        assertThat(r.getStatusCode().value()).isEqualTo(201);
+        assertThat(r.getBody().get("status")).isEqualTo("COMPLETED");
     }
 
     @Test
-    void controlRecordLifecycleWorks() {
-        var created = rest.postForEntity(
-                "http://localhost:" + port + "/v1/payment-transaction-procedure/initiate",
-                Map.of("note", "smoke"), Map.class);
-        assertThat(created.getStatusCode().value()).isEqualTo(201);
-        assertThat(created.getBody()).containsKey("controlRecordId");
+    void creditFailureCompensatesThroughTheApi() {
+        var r = rest.postForEntity(url(CR + "/initiate"),
+                Map.of("orderRef", "PO-API-2", "debtorAccountRef", "CA-D",
+                        "creditorAccountRef", "CA-FAIL-CREDIT-9", "amountMinor", 50_000),
+                Map.class);
+        assertThat(r.getBody().get("status")).isEqualTo("FAILED_COMPENSATED");
+        assertThat((String) r.getBody().get("failureReason")).startsWith("CREDIT_FAILED:");
     }
 }

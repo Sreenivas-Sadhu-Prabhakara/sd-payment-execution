@@ -1,0 +1,18 @@
+# Event contract — owned by THIS repo. Topic catalog: bian-platform/platform-infra/kafka/topics.yaml
+service: sd-payment-execution
+publishes:
+  - topic: bian.payments.payment-execution   # FLAGSHIP PAYMENTS FLOW
+    events:
+      - type: payment.debited
+        payload: [executionId, orderRef, debtorAccountRef, amountMinor]
+      - type: payment.completed                # consumed by sd-payment-order (execution-result)
+        payload: [executionId, orderRef, status, reason, amountMinor]
+      - type: payment.failed                   # FAILED_DEBIT or FAILED_COMPENSATED
+        payload: [executionId, orderRef, status, reason, amountMinor]
+      - type: payment.suspense                 # FAILED_SUSPENSE — ops alert; never auto-retried
+        payload: [executionId, orderRef, status, reason, amountMinor]
+consumes:
+  - topic: bian.payments.payment-order
+    events:
+      - type: payment-order.submitted          # → POST /initiate (HTTP bridge today, consumer later)
+        from: sd-payment-order
