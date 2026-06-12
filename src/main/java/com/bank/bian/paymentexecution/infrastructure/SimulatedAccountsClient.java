@@ -19,6 +19,10 @@ import java.util.Locale;
  *   anything else      → both legs succeed
  */
 @Component
+// Default adapter — replaced by HttpAccountsClient once the account-SD URLs
+// are configured (havingValue="false" can never equal a real URL).
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(
+        name = "bian.payments.accounts.current-account-url", havingValue = "false", matchIfMissing = true)
 public class SimulatedAccountsClient implements AccountsClient {
 
     private static final Logger log = LoggerFactory.getLogger("bian.accounts-sim");
